@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="180" height="40" viewBox="0 0 600 140">
+  <rect rx="18" width="600" height="140" fill="#0b1020"/>
+  <text x="40" y="90" font-size="64" font-family="Segoe UI, Roboto, Arial" fill="#7dd3fc">Econo</text>
+  <text x="260" y="90" font-size="64" font-family="Segoe UI, Roboto, Arial" fill="#34d399">Deal</text>
+</svg>
