@@ -38,6 +38,10 @@ python scripts/bureau_en_gros_scraper.py \
 
 The outputs are consumed automatically by `assets/js/app.js` (store filter will show "Bureau en Gros").
 
+### Manual GitHub Actions run
+
+If you prefer to generate datasets without using your local environment, trigger the **Manual Bureau en Gros scrape** workflow from the **Actions** tab. It accepts an optional `url` input (leave blank to parse the bundled fixture) and uploads the JSON/CSV outputs as downloadable artifacts.
+
 ## GitHub Pages
 1. Create a new repo (e.g., `econodeal-landing`).
 2. Upload all files from this zip to the root of the repo.

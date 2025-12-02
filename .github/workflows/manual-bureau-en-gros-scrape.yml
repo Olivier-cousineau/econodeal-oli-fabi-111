@@ -1,0 +1,52 @@
+name: Manual Bureau en Gros scrape
+
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: "Optional live clearance page URL to scrape; leave blank to parse the bundled fixture."
+        required: false
+        default: ""
+      json_out:
+        description: "Filename for the JSON dataset artifact."
+        required: false
+        default: "bureau_en_gros_liquidations.json"
+      csv_out:
+        description: "Filename for the CSV dataset artifact."
+        required: false
+        default: "bureau_en_gros_liquidations.csv"
+
+jobs:
+  scrape:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: Run Bureau en Gros scraper
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          if [ -n "${{ inputs.url }}" ]; then
+            SRC_FLAG="--url ${{ inputs.url }}"
+          else
+            SRC_FLAG="--input fixtures/bureau_en_gros_liquidation.html"
+          fi
+
+          python scripts/bureau_en_gros_scraper.py \
+            ${SRC_FLAG} \
+            --json-out "artifacts/${{ inputs.json_out }}" \
+            --csv-out "artifacts/${{ inputs.csv_out }}"
+
+      - name: Upload datasets
+        uses: actions/upload-artifact@v4
+        with:
+          name: bureau-en-gros-datasets
+          path: artifacts/
+          if-no-files-found: error
