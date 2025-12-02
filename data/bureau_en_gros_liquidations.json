@@ -1,0 +1,35 @@
+[
+  {
+    "store": "Bureau en Gros",
+    "category": "Mobilier de bureau",
+    "name": "Chaise ergonomique en maille Dalton",
+    "price": "$149.97",
+    "regular_price": "$289.99",
+    "product_url": "https://www.bureauengros.com/fr/chaise-ergonomique-en-maille-dalton/BI1001.html",
+    "image_url": "https://assets.bureauengros.local/images/dalton-chair.jpg",
+    "sku": "BG-1001",
+    "availability": "En stock"
+  },
+  {
+    "store": "Bureau en Gros",
+    "category": "Mobilier de bureau / Postes de travail",
+    "name": "Bureau assis-debout électrique Altitude",
+    "price": "$399.99",
+    "regular_price": "$699.99",
+    "product_url": "https://www.bureauengros.com/fr/bureau-assis-debout-electrique-altitude/BI2040.html",
+    "image_url": "https://assets.bureauengros.local/images/altitude-desk.jpg",
+    "sku": "BG-2040",
+    "availability": "Stock limité"
+  },
+  {
+    "store": "Bureau en Gros",
+    "category": "Accessoires > Moniteurs",
+    "name": "Support double écran articulé Flex 27\"",
+    "price": "$89.99",
+    "regular_price": "$199.99",
+    "product_url": "https://www.bureauengros.com/fr/support-double-ecran-articule-flex-27/BI3325.html",
+    "image_url": "https://assets.bureauengros.local/images/flex-monitor-arm.jpg",
+    "sku": "BG-3325",
+    "availability": "En magasin seulement"
+  }
+]
