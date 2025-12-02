@@ -1,253 +1,163 @@
-#!/usr/bin/env python3
-"""Bureau en Gros clearance scraper.
-
-Usage:
-  python scripts/bureau_en_gros_scraper.py --url https://www.bureauengros.com/fr/clearance
-  python scripts/bureau_en_gros_scraper.py --input fixtures/bureau_en_gros_liquidation.html
-
-Outputs JSON and CSV files with normalized fields consumed by the landing page.
-The scraper relies on JSON embedded in the page (e.g., Next.js `__NEXT_DATA__`).
-"""
-
-from __future__ import annotations
-
-import argparse
+#!/usr/bin/env python
+import os
 import csv
 import json
-import re
-import sys
-from dataclasses import dataclass
-from pathlib import Path
-from typing import Any, Dict, Iterable, List, Optional
-from urllib.error import HTTPError, URLError
-from urllib.parse import urljoin
-from urllib.request import Request, urlopen
+import time
+from typing import List, Dict
+
+import requests
+from bs4 import BeautifulSoup
+
+# URL de base pour les liquidations Bureau en Gros / Staples
+# ⚠️ À ADAPTER si tu as une URL spécifique (magasin, langue, etc.)
+BASE_URL = "https://www.staples.ca/a/search?language=fr&initiative=clearance&page={page}"
+
+HEADERS = {
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0 Safari/537.36"
+    )
+}
 
 
-STORE_NAME = "Bureau en Gros"
+def fetch_page(page: int) -> str:
+    """Télécharge le HTML d'une page de liquidation."""
+    url = BASE_URL.format(page=page)
+    print(f"[INFO] Fetch page {page}: {url}")
+    resp = requests.get(url, headers=HEADERS, timeout=30)
+    resp.raise_for_status()
+    return resp.text
 
 
-@dataclass
-class Product:
-    name: str
-    price: Optional[str]
-    regular_price: Optional[str]
-    product_url: Optional[str]
-    image_url: Optional[str]
-    category: Optional[str]
-    availability: Optional[str]
-    sku: Optional[str]
-    store: str = STORE_NAME
-
-    def to_mapping(self) -> Dict[str, Optional[str]]:
-        return {
-            "store": self.store,
-            "category": self.category,
-            "name": self.name,
-            "price": self.price,
-            "regular_price": self.regular_price,
-            "product_url": self.product_url,
-            "image_url": self.image_url,
-            "sku": self.sku,
-            "availability": self.availability,
-        }
-
-
-class BureauEnGrosScraper:
-    def __init__(self, base_url: str = "https://www.bureauengros.com") -> None:
-        self.base_url = base_url.rstrip("/")
-
-    # --------------------------- HTTP / IO helpers ---------------------------
-    def fetch_url(self, url: str) -> str:
-        request = Request(url, headers={"User-Agent": "Mozilla/5.0 (scraper)"})
-        try:
-            with urlopen(request, timeout=20) as resp:  # nosec: B310 - trusted target configured by user
-                charset = resp.headers.get_content_charset() or "utf-8"
-                return resp.read().decode(charset, errors="replace")
-        except HTTPError as exc:  # pragma: no cover - exercised only online
-            raise RuntimeError(f"HTTP error {exc.code} for {url}") from exc
-        except URLError as exc:  # pragma: no cover - exercised only online
-            raise RuntimeError(f"Network error for {url}: {exc.reason}") from exc
-
-    def load_source(self, url: Optional[str], input_path: Optional[Path]) -> str:
-        if input_path:
-            return Path(input_path).read_text(encoding="utf-8")
-        if url:
-            return self.fetch_url(url)
-        raise ValueError("Provide either --url or --input")
-
-    # -------------------------- Parsing / extraction -------------------------
-    @staticmethod
-    def _extract_json_strings(html: str) -> Iterable[str]:
-        script_pattern = re.compile(r'<script[^>]*type="application/json"[^>]*>(.*?)</script>', re.S)
-        next_data_pattern = re.compile(r"__NEXT_DATA__\s*=\s*({.*?})\s*<", re.S)
-        preloaded_pattern = re.compile(r"__PRELOADED_STATE__\s*=\s*({.*?})\s*;", re.S)
-
-        for regex in (script_pattern, next_data_pattern, preloaded_pattern):
-            for match in regex.findall(html):
-                yield match.strip()
-
-    @staticmethod
-    def _to_float(value: Any) -> Optional[float]:
-        if value is None:
-            return None
-        if isinstance(value, (int, float)):
-            return float(value)
-        if isinstance(value, str):
-            cleaned = re.sub(r"[^\d.,-]", "", value).replace(",", ".")
-            try:
-                return float(cleaned)
-            except ValueError:
-                return None
+def normalize_price(text: str):
+    """Nettoie un prix du type 'CA$ 19,99' -> 19.99 (float)."""
+    if not text:
+        return None
+    text = text.replace("CA$", "").replace("$", "")
+    text = text.replace(" ", "").replace("\u00a0", "")
+    text = text.replace(",", ".")
+    try:
+        return float(text)
+    except ValueError:
         return None
 
-    def _format_price(self, value: Any) -> Optional[str]:
-        number = self._to_float(value)
-        if number is None:
-            return None
-        return f"${number:.2f}"
 
-    @staticmethod
-    def _looks_like_product(obj: Any) -> bool:
-        if not isinstance(obj, dict):
-            return False
-        has_name = any(k in obj for k in ("name", "title"))
-        has_price = any(k in obj for k in ("salePrice", "offerPrice", "price", "currentPrice", "regularPrice", "listPrice"))
-        return has_name and has_price
+def parse_products(html: str) -> List[Dict]:
+    """Parse le HTML et extrait les produits de liquidation."""
+    soup = BeautifulSoup(html, "html.parser")
 
-    def _find_product_nodes(self, obj: Any) -> Iterable[Dict[str, Any]]:
-        if isinstance(obj, list):
-            for item in obj:
-                yield from self._find_product_nodes(item)
-        elif isinstance(obj, dict):
-            if self._looks_like_product(obj):
-                yield obj
-            for value in obj.values():
-                yield from self._find_product_nodes(value)
+    tiles = soup.select("div.product-tile.js-product-tile")
+    products: List[Dict] = []
 
-    def _first_non_null(self, obj: Dict[str, Any], keys: Iterable[str]) -> Any:
-        for key in keys:
-            if key in obj and obj[key] not in (None, ""):
-                return obj[key]
-        return None
+    for tile in tiles:
+        # Titre
+        title_el = tile.select_one(".product-tile__title")
+        title = title_el.get_text(strip=True) if title_el else ""
 
-    def _normalize_product(self, raw: Dict[str, Any]) -> Optional[Product]:
-        name = self._first_non_null(raw, ("name", "title"))
-        if not name:
-            return None
+        # Lien produit
+        link_el = tile.select_one("a.product-tile__image-link, a.product-tile__title-link")
+        url = link_el["href"] if link_el and link_el.has_attr("href") else ""
 
-        price = self._format_price(self._first_non_null(raw, (
-            "salePrice",
-            "offerPrice",
-            "price",
-            "currentPrice",
-            "activePrice",
-        )))
-        regular_price = self._format_price(self._first_non_null(raw, (
-            "listPrice",
-            "regularPrice",
-            "wasPrice",
-        )))
+        # Prix actuel
+        price_el = tile.select_one(".product-pricing__price")
+        price_text = price_el.get_text(strip=True) if price_el else ""
+        current_price = normalize_price(price_text)
 
-        sku = self._first_non_null(raw, ("sku", "id", "itemId", "partNumber"))
-        product_url = self._first_non_null(raw, ("product_url", "productUrl", "url", "pdpUrl"))
-        if isinstance(product_url, str) and product_url.startswith("/"):
-            product_url = urljoin(self.base_url, product_url)
+        # Prix original (barré)
+        original_el = tile.select_one(
+            ".product-pricing__list-price, .product-pricing__original-price"
+        )
+        original_text = original_el.get_text(strip=True) if original_el else ""
+        original_price = normalize_price(original_text)
 
-        image_candidates = self._first_non_null(raw, (
-            "image",
-            "imageUrl",
-            "thumbnail",
-            "primaryImage",
-            "image_url",
-            "images",
-        ))
-        image_url: Optional[str] = None
-        if isinstance(image_candidates, list):
-            image_url = image_candidates[0]
-        else:
-            image_url = image_candidates
+        # SKU
+        sku_el = tile.select_one("[data-product-sku]")
+        sku = sku_el["data-product-sku"] if sku_el and sku_el.has_attr("data-product-sku") else ""
 
-        category = self._first_non_null(raw, ("category", "categoryPath", "categoryName"))
-        if isinstance(category, list):
-            category = " / ".join(str(c) for c in category)
+        # Image
+        img_el = tile.select_one("img.product-tile__image")
+        image_url = img_el["src"] if img_el and img_el.has_attr("src") else ""
 
-        availability = self._first_non_null(raw, ("availability", "availabilityStatus", "stockMessage", "inventoryStatus"))
+        # Rabais %
+        discount_percent = None
+        if original_price and current_price and original_price > 0:
+            discount_percent = round((1 - current_price / original_price) * 100, 2)
 
-        return Product(
-            name=str(name).strip(),
-            price=price,
-            regular_price=regular_price,
-            product_url=product_url,
-            image_url=image_url,
-            category=category,
-            availability=availability,
-            sku=str(sku) if sku is not None else None,
+        products.append(
+            {
+                "title": title,
+                "url": url,
+                "sku": sku,
+                "current_price": current_price,
+                "original_price": original_price,
+                "discount_percent": discount_percent,
+                "image_url": image_url,
+            }
         )
 
-    def parse_products(self, html: str) -> List[Product]:
-        products: List[Product] = []
-        for block in self._extract_json_strings(html):
-            try:
-                data = json.loads(block)
-            except json.JSONDecodeError:
-                continue
-            for raw in self._find_product_nodes(data):
-                product = self._normalize_product(raw)
-                if product:
-                    products.append(product)
-
-        # Deduplicate by SKU/name + price
-        deduped: Dict[str, Product] = {}
-        for item in products:
-            key = item.sku or f"{item.name}|{item.price}"
-            deduped[key] = item
-        return list(deduped.values())
-
-    # ------------------------------- Public API ------------------------------
-    def scrape(self, url: Optional[str] = None, input_path: Optional[Path] = None) -> List[Product]:
-        html = self.load_source(url=url, input_path=input_path)
-        return self.parse_products(html)
+    print(f"[INFO] Parsed {len(products)} products on page")
+    return products
 
 
-def write_json(path: Path, products: List[Product]) -> None:
-    payload = [p.to_mapping() for p in products]
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
+def scrape_all_pages(max_pages: int = 20, delay: float = 1.5) -> List[Dict]:
+    """Scrape plusieurs pages jusqu'à ce qu'il n'y ait plus de produits."""
+    all_products: List[Dict] = []
+
+    for page in range(1, max_pages + 1):
+        html = fetch_page(page)
+        products = parse_products(html)
+
+        if not products:
+            print(f"[INFO] No products on page {page}, stopping.")
+            break
+
+        all_products.extend(products)
+        time.sleep(delay)
+
+    print(f"[INFO] Total products scraped: {len(all_products)}")
+    return all_products
 
 
-def write_csv(path: Path, products: List[Product]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fieldnames = ["store", "category", "name", "price", "regular_price", "product_url", "image_url", "sku", "availability"]
-    with path.open("w", encoding="utf-8", newline="") as f:
+def save_outputs(products: List[Dict], output_dir: str = "artifacts"):
+    """Sauvegarde les résultats en JSON et CSV dans artifacts/."""
+    os.makedirs(output_dir, exist_ok=True)
+    json_path = os.path.join(output_dir, "bureau_en_gros_liquidations.json")
+    csv_path = os.path.join(output_dir, "bureau_en_gros_liquidations.csv")
+
+    with open(json_path, "w", encoding="utf-8") as f:
+        json.dump(products, f, ensure_ascii=False, indent=2)
+
+    if products:
+        fieldnames = list(products[0].keys())
+    else:
+        fieldnames = [
+            "title",
+            "url",
+            "sku",
+            "current_price",
+            "original_price",
+            "discount_percent",
+            "image_url",
+        ]
+
+    with open(csv_path, "w", encoding="utf-8", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=fieldnames)
         writer.writeheader()
-        for product in products:
-            writer.writerow({k: v or "" for k, v in product.to_mapping().items()})
+        for p in products:
+            writer.writerow(p)
+
+    print(f"[INFO] Saved JSON -> {json_path}")
+    print(f"[INFO] Saved CSV  -> {csv_path}")
 
 
-def main(argv: Optional[List[str]] = None) -> int:
-    parser = argparse.ArgumentParser(description="Scrape Bureau en Gros liquidation products.")
-    parser.add_argument("--url", help="Page URL to scrape (liquidation / clearance).")
-    parser.add_argument("--input", type=Path, help="Local HTML file to parse instead of fetching.")
-    parser.add_argument("--json-out", type=Path, default=Path("data/bureau_en_gros_liquidations.json"), help="Path to write JSON output.")
-    parser.add_argument("--csv-out", type=Path, default=Path("data/bureau_en_gros_liquidations.csv"), help="Path to write CSV output.")
-    parser.add_argument("--base-url", default="https://www.bureauengros.com", help="Base URL used to resolve relative product links.")
+def main():
+    max_pages_env = os.getenv("BUREAU_EN_GROS_MAX_PAGES")
+    max_pages = int(max_pages_env) if max_pages_env else 20
 
-    args = parser.parse_args(argv)
-    scraper = BureauEnGrosScraper(base_url=args.base_url)
-
-    products = scraper.scrape(url=args.url, input_path=args.input)
-    if not products:
-        print("No products extracted", file=sys.stderr)
-        return 1
-
-    write_json(args.json_out, products)
-    write_csv(args.csv_out, products)
-
-    print(f"Extracted {len(products)} products → {args.json_out} / {args.csv_out}")
-    return 0
+    products = scrape_all_pages(max_pages=max_pages)
+    save_outputs(products)
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    main()
