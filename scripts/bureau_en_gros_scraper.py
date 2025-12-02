@@ -10,24 +10,54 @@ from bs4 import BeautifulSoup
 
 # URL de base pour les liquidations Bureau en Gros / Staples
 # ⚠️ À ADAPTER si tu as une URL spécifique (magasin, langue, etc.)
-BASE_URL = "https://www.staples.ca/a/search?language=fr&initiative=clearance&page={page}"
+BASE_URL = "https://www.staples.ca/a/search"
 
-HEADERS = {
-    "User-Agent": (
-        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0 Safari/537.36"
-    )
-}
+session = requests.Session()
+session.headers.update(
+    {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/120.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "fr-CA,fr;q=0.9,en;q=0.8",
+        "Referer": "https://www.staples.ca/",
+        "Connection": "keep-alive",
+    }
+)
 
 
-def fetch_page(page: int) -> str:
+def fetch_page(page: int, max_retries: int = 3, delay: int = 5) -> str:
     """Télécharge le HTML d'une page de liquidation."""
-    url = BASE_URL.format(page=page)
-    print(f"[INFO] Fetch page {page}: {url}")
-    resp = requests.get(url, headers=HEADERS, timeout=30)
-    resp.raise_for_status()
-    return resp.text
+    params = {
+        "language": "fr",
+        "initiative": "clearance",
+        "page": page,
+    }
+
+    last_status = None
+
+    for attempt in range(1, max_retries + 1):
+        print(f"[INFO] Fetch page {page} (attempt {attempt}/{max_retries})…")
+        resp = session.get(BASE_URL, params=params, timeout=30)
+        last_status = resp.status_code
+
+        if resp.status_code == 200:
+            return resp.text
+
+        if resp.status_code in (403, 429):
+            print(
+                f"[WARN] HTTP {resp.status_code} on page {page}, retrying after {delay * attempt} s…"
+            )
+            time.sleep(delay * attempt)
+            continue
+
+        print(f"[ERROR] HTTP {resp.status_code} on page {page}: {resp.text[:300]}")
+        return ""
+
+    print(f"[ERROR] Blocked on page {page} with status {last_status} after {max_retries} attempts.")
+    return ""
 
 
 def normalize_price(text: str):
@@ -105,13 +135,20 @@ def scrape_all_pages(max_pages: int = 20, delay: float = 1.5) -> List[Dict]:
     all_products: List[Dict] = []
 
     for page in range(1, max_pages + 1):
+        print(f"[INFO] Scraping page {page}/{max_pages}")
         html = fetch_page(page)
+
+        if not html:
+            print(f"[WARN] Empty or blocked page at {page}, stopping pagination.")
+            break
+
         products = parse_products(html)
 
         if not products:
-            print(f"[INFO] No products on page {page}, stopping.")
+            print(f"[INFO] No products found on page {page}, stopping pagination.")
             break
 
+        print(f"[INFO] Found {len(products)} products on page {page}")
         all_products.extend(products)
         time.sleep(delay)
 
