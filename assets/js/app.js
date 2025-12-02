@@ -3,7 +3,7 @@
 const I18N = {
   fr: {
     title: "EconoDeal – Les meilleures liquidations au Canada",
-    subtitle: "Explorez les rabais de Walmart, Toys“R”Us, RONA – avec liens Amazon, eBay et Keepa.",
+    subtitle: "Explorez les rabais de Walmart, Toys“R”Us, RONA et Bureau en Gros – avec liens Amazon, eBay et Keepa.",
     search: "Rechercher un produit…",
     store: "Magasin",
     category: "Catégorie",
@@ -16,7 +16,7 @@ const I18N = {
   },
   en: {
     title: "EconoDeal – The best clearance deals in Canada",
-    subtitle: "Browse deals from Walmart, Toys“R”Us, RONA — with Amazon, eBay and Keepa links.",
+    subtitle: "Browse deals from Walmart, Toys“R”Us, RONA, and Bureau en Gros — with Amazon, eBay and Keepa links.",
     search: "Search products…",
     store: "Store",
     category: "Category",
@@ -35,7 +35,8 @@ function t(key){ return I18N[LANG][key] || key }
 // Data sources
 const DS = {
   walmart: fetch("./data/walmart_clean.json").then(r => r.json()).catch(_ => []),
-  toys: fetch("./data/toysrus_clean.json").then(r => r.json()).catch(_ => [])
+  toys: fetch("./data/toysrus_clean.json").then(r => r.json()).catch(_ => []),
+  bureau: fetch("./data/bureau_en_gros_liquidations.json").then(r => r.json()).catch(_ => [])
 };
 
 function encode(q){ return encodeURIComponent(q || "") }
@@ -141,7 +142,7 @@ function renderUI(deals){
 }
 
 async function boot(){
-  const deals = [...await DS.walmart, ...await DS.toys];
+  const deals = [...await DS.walmart, ...await DS.toys, ...await DS.bureau];
   renderUI(deals);
 }
 boot();
